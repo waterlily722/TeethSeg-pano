@@ -1,236 +1,100 @@
-# Repository for UFBA-425 and OralBBNet
+# ECE3070 课程项目：牙齿全景 X 光片实例分割
 
-This repository contains the implementation related to the pipelines of [UFBA-425](https://figshare.com/articles/dataset/UFBA-425/29827475) dataset and the paper [OralBBNet: Spatially Guided Dental Segmentation of Panoramic X-Rays with Bounding Box Priors](https://arxiv.org/abs/2406.03747).
+本仓库用于 ECE3070 课程项目，核心实验脚本与报告对齐如下：
 
-- UFBA-425 Dataset used in this study are avaiable at [FigShare](https://figshare.com/articles/dataset/UFBA-425/29827475)
+- 课程报告文档：ECE3070 Group Coursework - V2.pdf
+- 主要实验 Notebook：teeth_three_methods.ipynb
 
-- 🔥 UFBA-425 Dataset featured in Roboflow100-VL Benchmark for the year of 2025 and referred UFBA-425 as one of the hardest datasets for vision tasks. Find the [paper](https://media.roboflow.com/rf100vl/rf100vl.pdf) here.
+项目目标是在全景牙片中完成 32 个 FDI 牙位的实例分割，并比较三类方法：
 
-## Dataset
+1. Active Contour（传统方法，无监督训练）
+2. U-Net（仅使用 X 光图像）
+3. OralBBNet（X 光图像 + YOLO 边界框先验）
 
-- We introduce a set of 425 panoramic X-rays with Human annotated Bounding Boxes and Polygons, the 425 images are a subset of UFBA-UESC Dental Dataset. This dataset can be extensively used for detection and segmentation tasks for Dental Panoramic X-rays. Refer to [Description](./Dataset/Dataset_description.pdf) for understanding the organisation of training and evaluation data. The Distribution of Categories in the dataset are metnioned in the table below.
+## 与课程项目对应关系
 
+本仓库中的实验流程与课程项目写作结构一一对应：
 
-<table style="margin-left:auto;margin-right:auto;">
-  <thead>
-    <tr>
-      <th style="text-align:center;">Category</th>
-      <th style="text-align:center;">32 Teeth</th>
-      <th style="text-align:center;">Restoration</th>
-      <th style="text-align:center;">Dental Appliance</th>
-      <th style="text-align:center;">Images</th>
-      <th style="text-align:center;">Used Images</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="text-align:center;">1</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;">73</td>
-      <td style="text-align:center;">24</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">2</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">220</td>
-      <td style="text-align:center;">72</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">3</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">45</td>
-      <td style="text-align:center;">15</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">4</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">140</td>
-      <td style="text-align:center;">32</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">5</td>
-      <td colspan="3" style="text-align:center;">Images containing dental implant</td>
-      <td style="text-align:center;">120</td>
-      <td style="text-align:center;">37</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">6</td>
-      <td colspan="3" style="text-align:center;">Images containing more than 32 teeth</td>
-      <td style="text-align:center;">170</td>
-      <td style="text-align:center;">30</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">7</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;">115</td>
-      <td style="text-align:center;">33</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">8</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">457</td>
-      <td style="text-align:center;">140</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">9</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">✓</td>
-      <td style="text-align:center;">45</td>
-      <td style="text-align:center;">7</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;">10</td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;">115</td>
-      <td style="text-align:center;">35</td>
-    </tr>
-    <tr>
-      <td style="text-align:center;"><strong>Total</strong></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"></td>
-      <td style="text-align:center;"><strong>1500</strong></td>
-      <td style="text-align:center;"><strong>425</strong></td>
-    </tr>
-  </tbody>
-</table>
+1. 数据索引与预处理
+2. 训练/验证/测试划分
+3. 三种方法训练与推理
+4. 阈值搜索与定量评估
+5. 定性可视化与实验结论
 
+在 Notebook 中，U-Net 与 OralBBNet 都会在验证集上自动搜索最佳二值化阈值，再用于测试集评估，指标包含：
 
-## Results
+- Binary Dice
+- Binary IoU
+- Mean Channel Dice
+- 分组 Dice（门牙/尖牙/前磨牙/磨牙）
 
-- Teeth Numbering Results 
+## 仓库结构
 
-<table>
-  <tr>
-    <th>Model Architecture</th>
-    <th>mAP</th>
-    <th>AP50</th>
-  </tr>
-  <tr>
-    <td>Mask R-CNN</td>
-    <td>70.5</td>
-    <td>97.2</td>
-  </tr>
-  <tr>
-    <td>PANet</td>
-    <td>74.0</td>
-    <td>99.7</td>
-  </tr>
-  <tr>
-    <td>HTC</td>
-    <td>71.1</td>
-    <td>97.3</td>
-  </tr>
-  <tr>
-    <td>ResNeSt</td>
-    <td>72.1</td>
-    <td>96.8</td>
-  </tr>
-  <tr>
-    <td>YOLOv8</td>
-    <td>74.9</td>
-    <td>94.6</td>
-  </tr>
-</table>
+.
+├── Dataset/
+│   ├── bb_u_net_dataset/
+│   ├── yolo_train_dataset/
+│   └── yolo_test_dataset/
+├── notebooks/
+├── results/
+├── cache/
+├── teeth_three_methods.ipynb
+└── ECE3070 Group Coursework - V2.pdf
 
-- Instance Segmentation Results
+说明：
 
-<table>
-  <tr>
-    <th>Model Architecture</th>
-    <th>Incisors</th>
-    <th>Canines</th>
-    <th>Premolars</th>
-    <th>Molars</th>
-  </tr>
-  <tr>
-    <td>U-Net</td>
-    <td>73.29</td>
-    <td>69.92</td>
-    <td>67.62</td>
-    <td>64.98</td>
-  </tr>
-  <tr>
-    <td>YOLOv8-seg </td>
-    <td>82.78</td>
-    <td>81.91</td>
-    <td>81.89</td>
-    <td>81.42</td>
-  </tr>
-  <tr>
-    <td>SAM-2 </td>
-    <td>87.12</td>
-    <td>86.21</td>
-    <td>86.19</td>
-    <td>85.69</td>
-  </tr>
-  <tr>
-    <td>OralBBNet</td>
-    <td>89.34</td>
-    <td>88.40</td>
-    <td>88.38</td>
-    <td>87.87</td>
-  </tr>
-</table>
+- teeth_three_methods.ipynb 是课程实验主入口。
+- results/ 存放指标、训练曲线与可视化结果。
+- cache/ 存放预处理缓存，不参与版本管理。
 
-- Refer to the paper for further information on model architectures and datasets used for evaluation.
+## 环境与依赖
 
-## Teeth Numbering Heatmaps
-![Teeth Numbering](./imgs/det_res.png)
+建议使用 Python 3.10+，并在支持 TensorFlow GPU 的环境中运行。
 
-## Segmentation Masks
-![Segmentation Masks](./imgs/seg_res.png)
+安装依赖示例：
 
-
-
-## Code Structure 
 ```bash
-
-2ddaatagen.ipynb                   => Notebook for generating labels
-yolov8_train.ipynb                 => Notebook for training YOLOv8
-yolo_test.ipynb                    => Notebook for testing YOLOv8
-unet_training.ipynb                => Notebook for training U-Net
-unet+cv.ipynb                      => Notebook for training U-Net with cross validation
-yolov8+unet_training.ipynb         => Notebook for training OralBBNet
-yolov8+unet+cv.ipynb               => Notebook for training OralBBNet with cross validation
+pip install numpy pandas matplotlib pillow tifffile scikit-image scikit-learn opencv-python tensorflow keras
 ```
 
-## Cite Us
-If you want to cite the dataset, cite this:
-```bibtex
-@article{Budagam2025,
-author = "Devichand Budagam and Azamat Zhanatuly Imanbayev and Iskander Rafailovich Akhmetov and Aleksandr Sinitca and Sergey Antonov and Dmitrii Kaplun",
-title = "{UFBA-425}",
-year = "2025",
-month = "8",
-url = "https://figshare.com/articles/dataset/UFBA-425/29827475",
-doi = "10.6084/m9.figshare.29827475.v1"
-}
-```
-if you want to cite the method OralBBNet, cite this:
-```bibtex
-@misc{budagam2025oralbbnetspatiallyguideddental,
-      title={OralBBNet: Spatially Guided Dental Segmentation of Panoramic X-Rays with Bounding Box Priors}, 
-      author={Devichand Budagam and Azamat Zhanatuly Imanbayev and Iskander Rafailovich Akhmetov and Aleksandr Sinitca and Sergey Antonov and Dmitrii Kaplun},
-      year={2025},
-      eprint={2406.03747},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2406.03747}, 
-}
-```
+## 运行方式
+
+1. 进入仓库根目录后打开 Notebook：
+
+- teeth_three_methods.ipynb
+
+2. 按单元顺序运行，关键步骤如下：
+
+- 配置路径、训练参数、随机种子
+- 加载并缓存预处理数据
+- 训练 U-Net 与 OralBBNet
+- 在验证集搜索最佳阈值
+- 在测试集输出指标与可视化
+
+3. 主要输出文件：
+
+- results/metrics.csv
+- results/unet_history.csv
+- results/oralbbnet_history.csv
+- results/qualitative_examples.png
+- results/checkpoints/*.weights.h5
+
+## 版本管理说明
+
+为避免提交大文件，仓库已配置忽略以下内容：
+
+- cache/
+- results/checkpoints/
+- *.weights.h5
+- *.pth
+- *.pt
+- *.ckpt
+
+这与课程项目提交流程一致：保留代码、报告、指标与可视化结果，排除缓存与模型权重。
+
+## 数据与参考
+
+- UFBA-425 数据集：https://figshare.com/articles/dataset/UFBA-425/29827475
+- OralBBNet 论文：https://arxiv.org/abs/2406.03747
+
+如果你希望，我可以继续把 README 增补为“课程报告章节映射版”（例如：问题定义、方法、实验设置、结果分析、局限性），直接对应你 PDF 的章节标题。
