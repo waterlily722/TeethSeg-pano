@@ -97,4 +97,4 @@ pip install numpy pandas matplotlib pillow tifffile scikit-image scikit-learn op
 - UFBA-425 数据集：https://figshare.com/articles/dataset/UFBA-425/29827475
 - OralBBNet 论文：https://arxiv.org/abs/2406.03747
 
-如果你希望，我可以继续把 README 增补为“课程报告章节映射版”（例如：问题定义、方法、实验设置、结果分析、局限性），直接对应你 PDF 的章节标题。
+Hyperparameter Setup: The optimal results were obtained with the Adam optimizer with a learning rate of 0.0003 with a momentum of 0.99, a batch size of 2 and dropout rate of 0.12 and regularization constant λ of 0.1 and training over 60 epochs. The learning rate was halved if validation loss did not improve over a period of 5 epochs. The inference settings for YOLOv8 include a confidence threshold of 0.5 and an Intersection over Union (IoU) threshold of 0.5. 
