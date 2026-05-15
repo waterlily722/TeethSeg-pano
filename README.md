@@ -28,24 +28,11 @@
 - Mean Channel Dice
 - 分组 Dice（门牙/尖牙/前磨牙/磨牙）
 
-## 仓库结构
-
-.
-├── Dataset/
-│   ├── bb_u_net_dataset/
-│   ├── yolo_train_dataset/
-│   └── yolo_test_dataset/
-├── notebooks/
-├── results/
-├── cache/
-├── teeth_three_methods.ipynb
-└── ECE3070 Group Coursework - V2.pdf
-
-说明：
+## 仓库说明
 
 - teeth_three_methods.ipynb 是课程实验主入口。
 - results/ 存放指标、训练曲线与可视化结果。
-- cache/ 存放预处理缓存，不参与版本管理。
+- cache/ 存放预处理缓存。
 
 ## 环境与依赖
 
