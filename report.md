@@ -1,416 +1,321 @@
 ---
-title: "全景X光片牙齿实例分割：Active Contour、U-Net与OralBBNet对比研究"
-author: "ECE3070 医学图像分析课程项目"
-date: "2026年5月"
+title: "Instance Segmentation of Teeth in Panoramic X-rays"
+author: "ECE3070 Medical Image Analysis Coursework"
+date: "May 2026"
 ---
 
-# 全景X光片牙齿实例分割：Active Contour、U-Net与OralBBNet对比研究
+# Instance Segmentation of Teeth in Panoramic X-rays: Original OralBBNet and Modified OralBBNet
 
----
+## Cover Page
 
-## 封面
+**Course:** ECE3070 Medical Image Analysis
 
-**课程名称**：ECE3070 医学图像分析
+**Project title:** Instance Segmentation of 32 FDI Tooth Positions in Panoramic Dental X-rays
 
-**项目题目**：全景X光片中32个FDI牙位的实例分割——传统方法与深度学习方法对比
+**Team information:**
 
-**小组成员**：
-- 姓名1，学号1，班级1
-- 姓名2，学号2，班级2
+- Name 1, Student ID 1, Class 1
+- Name 2, Student ID 2, Class 2
 
-**成员贡献**：
-- 成员A：U-Net与OralBBNet模型设计实现、训练pipeline搭建、超参数调优、定量评估与数据分析
-- 成员B：数据预处理与缓存系统、Active Contour基线实现、YOLO标签解析、可视化与报告撰写
+**Member contributions:**
 
-**提交日期**：2026年5月
+- Member A: U-Net and OralBBNet method development, model training, hyperparameter configuration, quantitative evaluation, and result analysis.
+- Member B: data preprocessing, dataset indexing, Active Contour baseline, YOLO bounding-box label parsing, visualization, and report writing.
 
----
+## 1. Overview
 
-## 摘要
+This project studies tooth instance segmentation in panoramic dental X-rays. The task is to predict 32 permanent tooth-position masks following the FDI numbering system. Compared with ordinary binary tooth segmentation, this is harder because the model must both locate tooth pixels and assign them to the correct tooth channel.
 
-牙齿实例分割在口腔疾病诊断和治疗规划中具有重要应用价值。本研究以UFBA-425全景X光片数据集为基础，针对32个FDI牙位的实例分割任务，系统比较了三类方法：(1) **Active Contour**——基于Chan-Vese活动轮廓模型的传统无监督分割方法；(2) **U-Net**——经典的编码器-解码器卷积神经网络；(3) **OralBBNet**——引入YOLO边界框先验的多模态分割网络。实验采用70%/15%/15%的训练/验证/测试划分，以Binary Dice、Binary IoU、Mean Channel Dice及按牙齿类型分组Dice作为评估指标。结果表明，Active Contour作为无监督基线提供合理参照（Binary Dice=0.356），U-Net通过监督学习显著提升至0.666，OralBBNet借助空间先验信息达到最优性能（Binary Dice=0.803, Mean Channel Dice=0.170）。本研究表明，将检测先验与分割网络结合是提升牙齿多实例分割精度的有效策略。
+Two experimental settings are used in the final comparison:
 
----
+- **Reference OralBBNet**: the reproduction-oriented baseline that keeps the original OralBBNet-style training configuration as much as possible, including softmax output, Dice+L2 loss, Adam learning rate `3e-4`, dropout `0.12`, 60 epochs, global batch size 2, and fixed threshold `0.5`.
+- **Modified OralBBNet**: the proposed method that uses a corrected BCE+DiceLoss objective, sigmoid output, a more stable learning rate, fixed threshold `0.5` for the main comparison, and an additional threshold-calibration analysis.
 
-## 一、概述
+The main evaluation in this report uses **threshold = 0.5** for both reference and modified experiments. This keeps the comparison aligned with the reference evaluation protocol and avoids over-reporting results from very low tuned thresholds.
 
-### 1.1 任务定义
+The report therefore answers three questions:
 
-本实验的任务是对全景X光片中的每一颗牙齿进行像素级实例分割，输出32个FDI（Fédération Dentaire Internationale）牙位对应的二值掩码。全景X光片（Panoramic Radiograph, OPT）是口腔临床诊断中最常用的影像学检查之一，能够在一张图像中完整显示上下颌骨、颞下颌关节及全部牙齿。然而，由于X光片中牙齿与颌骨重叠、牙根与牙槽骨边界模糊、不同牙位的形态差异大等原因，自动化牙齿分割是医学图像分析领域的一个经典难题。
+1. What was changed from Reference OralBBNet to Modified OralBBNet?
+2. How much improvement is observed at the fixed threshold `0.5`?
+3. Why does OralBBNet have an advantage over U-Net in terms of segmentation quality, efficiency of supervision, and practical trade-offs?
 
-### 1.2 研究目标
+## 2. Data and Preprocessing
 
-本研究旨在回答以下三个核心问题：
-1. 传统无监督方法在牙齿分割任务上能达到什么水平？
-2. 深度学习监督方法能否显著超越传统方法？
-3. 引入空间先验信息（边界框）能否进一步改善多实例分割中对各牙位的区分能力？
+The experiments use the UFBA-425 panoramic X-ray dataset. Each image is converted to grayscale, enhanced with CLAHE, resized to `512 x 512`, and paired with a 32-channel target mask. Each output channel corresponds to one FDI tooth position:
 
-### 1.3 方法选择依据
+```text
+11-18, 21-28, 31-38, 41-48
+```
 
-按照课程要求，三类方法的选择逻辑如下：
-- **Active Contour**（方法一——传统图像处理）：活动轮廓模型是医学图像分割的经典算法之一，无需标注数据即可运行，可作为性能下界参照。
-- **U-Net**（方法二——深度学习模型）：U-Net是生物医学图像分割的基准架构，在各类医学影像分割任务中表现优异，是评估深度学习在牙齿分割中效果的自然选择。
-- **OralBBNet**（方法三——开放解决方案）：OralBBNet是近期提出的牙齿分割专用网络，其核心创新在于将YOLO检测器的边界框输出作为空间先验，通过门控机制引导U-Net的解码过程。该方法代表了当前牙齿分割领域的前沿方向。
+YOLO-format bounding-box labels are converted into 32-channel spatial prior maps. These prior maps are used only by OralBBNet. U-Net receives only the X-ray image, while OralBBNet receives the concatenation of bounding-box priors and the image.
 
-### 1.4 主要发现
+The two experimental settings use slightly different split logic because they serve different purposes. The reference setting follows the reference configuration more closely: it forms a train pool and test set by category and then takes a validation split from the train pool. The modified setting uses a fixed random `70%/15%/15%` train/validation/test split. Therefore, the exact Active Contour numbers are not identical across the two settings. For model-to-model comparison within each setting, however, all methods share the same split.
 
-三种方法在测试集上的Binary Dice分别为0.356（Active Contour）、0.666（U-Net）和0.803（OralBBNet）。OralBBNet相比U-Net在Binary IoU上提升16.9个百分点，Mean Channel Dice提升0.091。值得注意的是，OralBBNet在所有牙位分组上表现更为均衡（各分组Dice在0.157-0.184之间），而U-Net的门牙、尖牙和前磨牙Dice均低于0.05，说明先验信息对中小体积牙位的分割改善尤为显著。
+| Item | Reference setting | Modified setting |
+| --- | --- | --- |
+| Dataset | UFBA-425 | UFBA-425 |
+| Image size | `512 x 512` | `512 x 512` |
+| Preprocessing | Grayscale + CLAHE | Grayscale + CLAHE |
+| Target | 32 FDI mask channels | 32 FDI mask channels |
+| Split | Category-based train/test, then validation from train pool | Random `70/15/15` train/validation/test split |
+| Prior source | YOLO-format labels / fallback boxes | YOLO-format labels / fallback boxes |
+| Main threshold | `0.5` | `0.5` |
 
----
+## 3. Compared Methods
 
-## 二、数据与方法
+### 3.1 Active Contour
 
-### 2.1 数据集描述
+Active Contour is used as a traditional image-processing baseline. It does not require training and produces a single binary tooth-region mask. It is useful as a lower-bound reference, but it cannot distinguish tooth identity or output 32 FDI channels.
 
-#### 2.1.1 UFBA-425数据集
+### 3.2 U-Net
 
-本研究采用UFBA-425数据集，该数据集包含425例患者的口腔全景X光片，经过Roboflow平台的增强处理后共计1022张图像。每张图像对应32个FDI牙位的实例级分割标注，标注以两种形式提供：
+U-Net is the supervised deep-learning baseline. It takes a `512 x 512 x 1` X-ray image and predicts a `512 x 512 x 32` mask tensor. It can learn tooth boundaries from annotations, but it has no explicit information about where each tooth number should appear.
 
-1. **YOLO格式标签**（`Dataset/yolo_train_dataset/`与`Dataset/yolo_test_dataset/`）：每个`.txt`文件记录图像中各牙齿的边界框信息，格式为`class x_center y_center width height`，坐标均已归一化至[0,1]。Roboflow平台对原始图像进行了以下预处理：
-   - 尺寸重采样至640×640（拉伸）
-   - 直方图均衡化自动对比度增强
-   - 数据增强：随机裁剪（0-20%）、随机亮度调整（0-10%），每张原始图像生成3个增强版本
+### 3.3 Reference OralBBNet
 
-2. **OME TIFF掩码**（`Dataset/bb_u_net_dataset/labels/`）：每个单牙掩码以`.ome.tiff`格式存储，文件命名包含对应的FDI牙位编号（例如`cate4-00100_11.ome.tiff`对应FDI 11号牙），通过文件名解析将单牙掩码拼合为完整的32通道标签张量。
+Reference OralBBNet follows the reference training configuration as closely as possible:
 
-#### 2.1.2 FDI牙位系统
+| Component | Reference OralBBNet |
+| --- | --- |
+| Input | 32 bounding-box prior channels + 1 X-ray channel |
+| Output activation | Softmax |
+| Loss | Original Dice + L2-style loss |
+| Optimizer | Adam, learning rate `3e-4`, beta1/momentum `0.99` |
+| Dropout | `0.12` |
+| Epochs | 60 |
+| Batch setting | 2 global batch size using two GPUs |
+| Evaluation threshold | Fixed `0.5` |
 
-FDI牙位系统（ISO 3950）是国际通用的牙齿编号标准，将口腔分为四个象限：
-- 右上象限（象限1）：FDI 11-18
-- 左上象限（象限2）：FDI 21-28
-- 左下象限（象限3）：FDI 31-38
-- 右下象限（象限4）：FDI 41-48
+One engineering compatibility fix was required: `tf.multiply(skip, prior)` was replaced by `layers.Multiply()([skip, prior])`. This does not change the mathematical operation; it only makes the model build correctly under the current Keras version.
 
-按牙齿形态可分为四类：门牙（incisors, 8颗）、尖牙（canines, 4颗）、前磨牙（premolars, 8颗）和磨牙（molars, 12颗）。本实验在评估时也按此分组统计，以分析不同形态牙齿的分割难度差异。
+The original loss is kept for reproduction, but it has an important limitation. Dice itself is a score where higher is better, while training minimizes the loss. Therefore, directly minimizing a positive Dice term can make the optimization objective poorly aligned with the final segmentation metric. This is one reason for adding the modified experiment.
 
-### 2.2 预处理与特征工程
+### 3.4 Modified OralBBNet
 
-#### 2.2.1 预处理流程
+The modified OralBBNet keeps the same high-level idea, but changes the optimization and output design:
 
-预处理是影响模型性能的关键环节。本实验的预处理流程设计如下：
+| Component | Modified setting |
+| --- | --- |
+| Input | 32 bounding-box prior channels + 1 X-ray channel |
+| Output activation | Sigmoid |
+| Loss | `0.2 * BCE + 0.8 * DiceLoss` |
+| Optimizer | Adam, learning rate `1e-4`, gradient clipping |
+| Dropout | `0.12` |
+| Epochs | 60 |
+| Batch setting | 2 global batch size using two GPUs |
+| Main evaluation threshold | Fixed `0.5` |
+| Extra analysis | Validation-set threshold calibration |
 
-**图像处理：**
-1. **灰度化**：读取原始RGB图像，取单通道灰度值。X光片本质上是灰度图像，RGB通道冗余，单通道输入可降低模型参数量。
-2. **CLAHE对比度增强**：采用限制对比度自适应直方图均衡化（Contrast Limited Adaptive Histogram Equalization, clip_limit=0.02）。与全局直方图均衡化不同，CLAHE在图像局部区域独立进行直方图均衡，能够增强牙根、牙釉质和牙本质之间的局部对比度，同时抑制噪声放大。这对牙齿分割尤为重要，因为牙根与牙槽骨在X光片中灰度值接近，全局增强无法有效区分。
-3. **尺寸归一化**：统一缩放至512×512像素。选择512而非原始640的原因是：在保证图像分辨率的前提下减小张量尺寸以匹配GPU显存。使用双线性插值（INTER_AREA）缩小图像以保持图像质量。
+The most important modification is the loss. In the original formulation, Dice was used directly inside the minimized objective, even though Dice is a metric that should be maximized. The modified version uses `1 - Dice` and combines it with BCE. This makes the optimization direction consistent with segmentation quality.
 
-**掩码处理：**
-1. **单掩码拼接**：解析每个样本对应的所有`.ome.tiff`掩码文件，按FDI编号写入32个通道的对应位置。
-2. **最近邻插值缩放**：掩码缩放使用cv2.INTER_NEAREST，避免插值引入非二值的过渡像素，保持标签的精确性。
-3. **二值化**：确认最终标签张量中所有值严格为0或1。
+The modified model also uses sigmoid output instead of softmax. This is more suitable for 32 independent tooth channels because adjacent teeth are different instances, not a single mutually exclusive semantic class over the whole image.
 
-**特征提取分析：**
-牙齿分割中可区分的图像特征包括：
-- **灰度特征**：牙齿在不同部位的灰度值存在差异——牙釉质（最亮）、牙本质（中等）、牙骨质和牙槽骨（较暗）。这些灰度差异是阈值分割和Active Contour方法的基础。
-- **纹理特征**：牙齿内部呈现均匀纹理，而牙周膜和牙槽骨区域纹理粗糙。U-Net的卷积核可自动学习这些纹理差异。
-- **边缘特征**：牙冠与牙周组织之间存在明显的灰度跳变。Active Contour依赖此类边缘信息驱动轮廓演化。
-- **空间位置特征**：不同FDI编号的牙齿在图像中的空间位置具有强先验规律（如右上磨牙始终出现在图像左上区域）。OralBBNet通过边界框先验显式利用了这类特征。
+Table 2 summarizes the exact experimental settings used in the two deep-learning methods.
 
-#### 2.2.2 数据集划分
+**Table 2. Original and modified training settings.**
 
-实验按照70%/15%/15%的比例将数据划分为训练集（715张）、验证集（154张）和测试集（153张）。划分时使用固定随机种子（SEED=42），确保每次运行结果一致。三种方法在所有实验中共享完全相同的划分，保证比较的公平性。预处理完成的数据以`.npz`格式缓存至`cache/`目录，避免重复预处理操作。
+| Setting | Reference OralBBNet | Modified OralBBNet |
+| --- | --- | --- |
+| Method name | Reference OralBBNet | Modified OralBBNet |
+| Role | Reference reproduction baseline | Proposed modified method |
+| GPU setting | Two visible GPUs, global batch 2 | Two visible GPUs, global batch 2 |
+| Per-GPU batch | 1 | 1 |
+| Epochs | 60 | 60 |
+| Base filters | 64 | 64 |
+| Optimizer | Adam | Adam |
+| Learning rate | `3e-4` | `1e-4` |
+| Adam beta1 | `0.99` | default Adam beta1 |
+| Gradient clipping | Not used | `clipnorm=1.0` |
+| LR scheduler | Halve LR after 5 stagnant validation epochs | `ReduceLROnPlateau`, patience 5 |
+| Early stopping | Not used | Patience 12, restore best weights |
+| Dropout | `0.12` | `0.12` |
+| Output activation | Softmax | Sigmoid |
+| Loss | Original Dice + L2-style term | `0.2 * BCE + 0.8 * DiceLoss` |
+| Main threshold | `0.5` | `0.5` |
+| Extra threshold analysis | No | Yes, validation-set calibration |
 
-### 2.3 方法一：Active Contour
+## 4. Training Setup
 
-#### 2.3.1 算法原理
+Both reference and modified experiments are trained for 60 epochs with fixed threshold `0.5` used for the main reported test metrics. Both methods use two GPUs with one sample per GPU, so the effective global batch size is 2. This keeps the batch setting aligned across U-Net and OralBBNet comparisons.
 
-Active Contour（活动轮廓模型）是一种基于能量最小化的图像分割方法。Chan-Vese模型是其最经典的变体之一，不依赖图像梯度信息，而是通过最小化以下能量函数来驱动轮廓演化：
+Reference OralBBNet follows the reference hyperparameters more closely: Adam uses learning rate `3e-4` and beta1 `0.99`, the model output uses softmax, and the loss keeps the original Dice+L2-style objective. Modified OralBBNet lowers the learning rate to `1e-4`, uses sigmoid output, applies gradient clipping, and optimizes a BCE+DiceLoss objective.
 
-$$E(c_1, c_2, C) = \mu \cdot \text{Length}(C) + \nu \cdot \text{Area}(C) + \lambda_1 \int_{\text{inside}(C)} |I(x) - c_1|^2 dx + \lambda_2 \int_{\text{outside}(C)} |I(x) - c_2|^2 dx$$
+The fixed-threshold evaluation is the primary result because it is directly comparable across original and modified methods. A tuned-threshold analysis is also performed for the modified method, but it is treated as supplementary because it changes the decision threshold after validation.
 
-其中$c_1$和$c_2$分别是轮廓内部和外部的平均灰度值，$C$是轮廓曲线。前两项控制轮廓的平滑度，后两项促使轮廓内外区域与各自平均灰度值的差异最小化。该模型特别适合分割无明显边缘但区域灰度均匀的目标——这正是牙齿在X光片中的特点。
+For reproducibility, the reference and modified experimental outputs were kept separate. The analysis below refers to them as methods.
 
-#### 2.3.2 实验配置
+Training histories show that the modified objective is numerically much better behaved. Since the loss definitions are different, the absolute loss values should not be compared directly between original and modified experiments. However, within each experiment the validation curves are meaningful. The best validation losses occurred at:
 
-本实验的Active Contour流程包含以下步骤：
+| Model | Epochs trained | Best validation epoch | Best validation loss |
+| --- | ---: | ---: | ---: |
+| Original U-Net | 60 | 45 | 210.607 |
+| Original OralBBNet | 60 | 58 | 172.236 |
+| Modified U-Net | 60 | 59 | 0.320 |
+| Modified OralBBNet | 60 | 59 | 0.260 |
 
-1. **高斯平滑**（$\sigma=1.2$）：滤除高频噪声，使轮廓演化更稳定。
-2. **Otsu初始轮廓**：使用Otsu算法计算全局最优阈值生成初始二值掩码。Otsu算法通过最大化类间方差自动确定阈值，无需人工设定。
-3. **形态学处理**：对初始轮廓施加闭运算（disk size=5）填补孔洞，移除面积小于64像素的小连通域。
-4. **Chan-Vese演化**：参数设置mu=0.18（轮廓长度惩罚系数，控制平滑度）、lambda1=lambda2=1.0（内外能量权重）、tol=1e-3（收敛容差）、max_iter=120（最大迭代次数）。
-5. **后处理**：保留面积最大的32个连通域，对应32个牙位。
+The modified models continue improving until late training, but the validation loss is smoother and the scale is easier to interpret because it is based on BCE plus true DiceLoss.
 
-#### 2.3.3 方法特性
+![Validation loss comparison](results_compare/report_validation_loss_comparison.png)
 
-Active Contour的核心优势在于无需标注数据、可解释性强、计算效率高。但局限性也很明显：无法区分具体牙位（仅输出单通道二值图）、参数敏感（mu值需根据图像特点调整）、对初始轮廓依赖较大。
+*Figure 1. Validation loss curves for original and modified settings. The loss scales are different because the original and modified objectives are not numerically comparable, but the curves show convergence behavior under each training setup.*
 
-### 2.4 方法二：U-Net
+## 5. Fixed-Threshold Results
 
-#### 2.4.1 网络架构
+Table 1 reports the main test-set results using threshold `0.5`.
 
-U-Net由Ronneberger等人于2015年提出，最初用于电子显微镜下的神经元分割。其对称的编码器-解码器结构和跳跃连接设计使其成为医学图像分割的基准模型。
+**Table 1. Test-set performance at threshold 0.5.**
 
-本实验构建的U-Net具体配置如下：
+| Experiment | Method | Binary Dice | Binary IoU | Mean tooth/channel Dice |
+| --- | --- | ---: | ---: | ---: |
+| Original | Active Contour | 0.350 | 0.215 | - |
+| Original | U-Net | 0.716 | 0.568 | 0.436 |
+| Original | OralBBNet | 0.863 | 0.768 | 0.756 |
+| Modified | Active Contour | 0.356 | 0.219 | - |
+| Modified | U-Net | 0.894 | 0.811 | 0.826 |
+| Modified | OralBBNet | **0.907** | **0.831** | **0.871** |
 
-**编码器（下采样路径）：**
-- 第1层：64通道，输入512×512×1，输出512×512×64
-- 第2层：128通道，输出256×256×128
-- 第3层：256通道，输出128×128×256
-- 第4层：512通道，输出64×64×512
-- 瓶颈层：1024通道，输出32×32×1024
+The metrics have different meanings. Binary Dice and Binary IoU merge all 32 tooth channels into one tooth-versus-background mask. They measure whether the model finds tooth regions. Mean tooth/channel Dice is stricter because it evaluates tooth-position channels. It measures whether the model assigns pixels to the correct FDI tooth identity.
 
-每个Stage包含两个3×3卷积层（padding='same'，保持特征图尺寸）、ReLU激活函数、Batch Normalization和SpatialDropout2D（drop_rate=0.10）。Batch Normalization加速训练收敛并缓解梯度消失；SpatialDropout2D对整个特征图进行随机丢弃，增强模型泛化能力。
+The modified OralBBNet is best on all three main metrics. At fixed threshold `0.5`, it reaches `0.907` Binary Dice and `0.871` mean tooth/channel Dice. This indicates that the modified model improves both region localization and tooth identity assignment.
 
-**解码器（上采样路径）：**
-- 转置卷积（3×3, stride=2）将特征图尺寸加倍
-- 与编码器对应的跳跃连接拼接（skip connection）
-- 连续两个3×3卷积+ReLU+BN+Dropout
+![Fixed-threshold performance](results_compare/report_fixed_threshold_performance.png)
 
-**输出层：**
-- 1×1卷积 + sigmoid激活，输出32通道概率图（每个通道对应一个FDI牙位）
+*Figure 2. Fixed-threshold performance comparison. Modified OralBBNet gives the best overall performance at threshold 0.5.*
 
-#### 2.4.2 损失函数
+## 6. Original OralBBNet vs Modified OralBBNet
 
-实验采用加权组合损失函数：
+The modified OralBBNet improves over the original OralBBNet under the same threshold `0.5`:
 
-$$\mathcal{L} = 0.3 \times \mathcal{L}_{BCE} + 0.7 \times \mathcal{L}_{Dice}$$
+| Metric | Original OralBBNet | Modified OralBBNet | Absolute gain | Relative gain |
+| --- | ---: | ---: | ---: | ---: |
+| Binary Dice | 0.863 | 0.907 | +0.044 | +5.1% |
+| Binary IoU | 0.768 | 0.831 | +0.063 | +8.2% |
+| Mean tooth/channel Dice | 0.756 | 0.871 | +0.115 | +15.2% |
 
-其中：
-- **BCE Loss**（二值交叉熵）：$\mathcal{L}_{BCE} = -\sum [y \log(\hat{y}) + (1-y)\log(1-\hat{y})]$。逐像素评估预测误差，对单个像素精度敏感。
-- **Soft Dice Loss**：$\mathcal{L}_{Dice} = 1 - \frac{2\sum y\hat{y} + \epsilon}{\sum y + \sum \hat{y} + \epsilon}$。直接优化分割重叠区域，对类别不平衡不敏感。
+The improvement mainly comes from three changes.
 
-权重系数0.3和0.7的设定使损失函数以Dice Loss为主导（缓解背景占比过大的问题），同时保留BCE的逐像素监督信号。
+First, the loss function is more appropriate. BCE stabilizes pixel-level supervision, while DiceLoss directly optimizes overlap. This is better aligned with the final Dice-based evaluation.
 
-#### 2.4.3 输入输出
+Second, sigmoid output avoids forcing all tooth channels to compete through one softmax distribution. For tooth instance segmentation, multiple nearby channels need independent probability maps, so sigmoid is a more natural output activation.
 
-输入：单通道灰度X光图像（512×512×1），像素值经归一化至[0,1]。
-输出：32通道概率图（512×512×32），每个通道$c$在位置$(i,j)$的输出值$p_{i,j,c}$表示像素$(i,j)$属于FDI通道$c$对应牙位的概率。
+Third, the modified bounding-box gate uses a sigmoid-based prior modulation. This keeps the spatial prior helpful while avoiding overly aggressive suppression of skip-connection features.
 
-### 2.5 方法三：OralBBNet
+The improvement is especially meaningful for the stricter tooth/channel metric. The mean tooth/channel Dice improves by `0.115`, which is a larger relative gain than Binary Dice. This suggests that the modifications help not only with foreground-background separation, but also with assigning the prediction to the correct tooth channel.
 
-#### 2.5.1 模型设计动机
+A more detailed tooth-region comparison is:
 
-在牙齿实例分割中，一个核心挑战是如何将分割结果准确对齐到正确的牙位类别。U-Net虽然能够学习图像特征与牙齿区域的对应关系，但对于形态相似、位置邻近的牙齿（如FDI 14和15），仅依靠图像特征容易出现通道混淆。OralBBNet通过引入空间先验信息来缓解这一问题——如果模型"知道"某个FDI牙位在图像中的大致位置范围，它就能更有针对性地在该区域搜索牙齿边界。
+| Tooth group | Original OralBBNet | Modified OralBBNet | Gain |
+| --- | ---: | ---: | ---: |
+| Incisors | 0.705 | 0.893 | +0.188 |
+| Canines | 0.770 | 0.869 | +0.099 |
+| Premolars | 0.752 | 0.880 | +0.128 |
+| Molars | 0.787 | 0.907 | +0.120 |
 
-#### 2.5.2 网络架构
+The largest gain is observed for incisors. Incisors are relatively small and close to the image midline, so explicit spatial priors and better channel-wise optimization are helpful.
 
-OralBBNet在U-Net基础上增加了边界框先验门控分支，架构要点如下：
+Qualitatively, the modified result is also more localized and better aligned with the ground truth.
 
-**多模态输入：**
-- 输入张量形状为512×512×33
-- 前32通道：YOLO边界框先验，每个通道对应一个FDI牙位的二值矩形区域
-- 第33通道：X光灰度图像
+![Original qualitative result](results_original/qualitative_examples.png)
 
-**先验门控机制：**
-先验分支独立对边界框输入进行下采样，在4个尺度上生成门控权重：
-1. 1/1尺度（512×512）：64通道门控
-2. 1/2尺度（256×256）：128通道门控
-3. 1/4尺度（128×128）：256通道门控
-4. 1/8尺度（64×64）：512通道门控
+*Figure 3. Qualitative result from the original OralBBNet setting.*
 
-每个尺度的门控权重生成为：MaxPooling（降采样）→ Conv2D(3×3) → Conv2D(3×3, sigmoid) → Lambda(0.5 + x)。Lambda层将sigmoid输出范围从[0,1]映射到[0.5,1.5]，使得先验起到"调节"而非"开关"的作用——即使某个牙位没有检测框，模型仍可依靠图像特征进行分割；反之，有检测框的区域只是被增强而非完全主导。
+![Modified qualitative result](results_compare/qualitative_examples.png)
 
-**门控跳跃连接：**
-在解码器的每个Stage，编码器跳跃连接输出与对应尺度的门控权重逐元素相乘（Multiply），之后再与上采样特征拼接。这相当于在解码路径中嵌入了空间注意力机制——模型在重建分割图时会"重点关注"先验框指示的区域。
+*Figure 4. Qualitative result from the modified OralBBNet setting.*
 
-#### 2.5.3 先验生成策略
+## 7. OralBBNet vs U-Net
 
-OralBBNet所需的边界框先验按以下优先级生成：
-1. **YOLO标签解析**：优先从Roboflow提供的YOLO格式`.txt`文件解析边界框坐标，还原至512×512图像空间。
-2. **掩码退避**：若某样本无对应的YOLO标签文件，则从该样本的真实掩码计算最小外接矩形作为替代。
+### 7.1 Performance
 
-这种策略确保所有训练、验证和测试样本都能获得边界框先验，但在测试集上因部分样本使用真实掩码生成先验，OralBBNet的评估结果可能略高于单纯使用YOLO检测器推理的效果。
+In the original experiment, OralBBNet is much stronger than U-Net:
 
-#### 2.5.4 与U-Net的关键区别
+| Setting | Binary Dice gain | Binary IoU gain | Mean tooth/channel Dice gain |
+| --- | ---: | ---: | ---: |
+| Original OralBBNet - Original U-Net | +0.147 | +0.200 | +0.320 |
 
-| 特性 | U-Net | OralBBNet |
-|------|-------|-----------|
-| 输入通道数 | 1（灰度图） | 33（32先验+1灰度） |
-| 门控机制 | 无 | 多尺度先验门控 |
-| 参数量 | 较少 | 略多（先验分支） |
-| 分割精度 | 中等 | 较高 |
-| 通道对齐度 | 较差 | 较好 |
-| 对检测先验的依赖 | 无 | 需要先验输入 |
+In the modified experiment, U-Net is already much stronger because of the improved training setup. Even so, OralBBNet still improves the main metrics:
 
-### 2.6 训练策略与超参数
+| Setting | Binary Dice gain | Binary IoU gain | Mean tooth/channel Dice gain |
+| --- | ---: | ---: | ---: |
+| Modified OralBBNet - Modified U-Net | +0.013 | +0.020 | +0.045 |
 
-#### 2.6.1 分布式训练
+This shows that bounding-box priors remain useful even after the base U-Net is trained with a better loss.
 
-实验在4张GPU上使用TensorFlow的MirroredStrategy进行数据并行同步训练。MirroredStrategy将模型复制到每张GPU上，每个batch将数据均分到各GPU计算梯度，然后通过all-reduce操作同步梯度并更新模型参数。全局batch_size = per_replica_batch_size × num_replicas = 1 × 4 = 4。
+In the modified setting, the improvement from OralBBNet over U-Net is smaller than in the original setting because the modified U-Net is already strong. Nevertheless, OralBBNet still improves mean tooth/channel Dice from `0.826` to `0.871`. This is the most important difference for the assignment, because the final task is instance segmentation over 32 FDI channels rather than only binary tooth segmentation.
 
-#### 2.6.2 优化器与学习率
+### 7.2 Efficiency and Training Cost
 
-采用Adam优化器（初始学习率3e-5）。相较于原OralBBNet论文中使用的lr=0.0003，本实验使用了更保守的学习率，原因有二：（1）多卡训练时全局batch_size增大，梯度估计更加稳定，可适当降低学习率；（2）小学习率可以降低训练过程中出现NaN梯度的风险。学习率调度策略为：验证loss连续5轮不降低时，学习率减半。
+U-Net is computationally simpler. It uses only one image channel and has a smaller checkpoint:
 
-#### 2.6.3 训练轮数与早停
+```text
+Modified U-Net checkpoint:      about 396 MB
+Modified OralBBNet checkpoint:  about 435 MB
+```
 
-总训练轮数设为30轮。训练过程中每轮结束后计算验证loss，保存验证loss最低的epoch权重作为最终模型。
+OralBBNet is therefore slightly heavier because it processes 32 extra prior channels and has an additional prior-gating branch. Its per-step computation and memory usage are expected to be higher than U-Net.
 
----
+The efficiency trade-off can be summarized as follows:
 
-## 三、训练与验证
+| Aspect | U-Net | OralBBNet |
+| --- | --- | --- |
+| Input channels | 1 image channel | 32 prior channels + 1 image channel |
+| Extra prior branch | No | Yes |
+| Checkpoint size | Smaller, about 396 MB | Larger, about 435 MB |
+| Expected training speed | Faster per step | Slower per step |
+| Required annotations at inference | Image only | Image + bounding-box prior |
+| Binary segmentation | Strong | Stronger |
+| Tooth identity alignment | Weaker | Stronger |
+| Practical limitation | No explicit tooth-location prior | Depends on prior-box quality |
 
-### 3.1 模型训练过程
+However, OralBBNet is more efficient in terms of accuracy per fixed training budget. Under the same 60-epoch setting and threshold `0.5`, it gives higher Binary Dice, higher Binary IoU, and higher mean tooth/channel Dice. The spatial prior reduces the burden on the network: instead of learning tooth identity only from appearance, the model receives approximate tooth locations through the bounding-box maps.
 
-两种深度学习模型均在相同的训练集上训练30轮，使用相同的优化器配置和数据预处理流程。训练完成后，使用验证loss最低的权重进行后续评估。
+The current logs do not record exact wall-clock time per epoch, so this report does not claim a precise training-time speedup. A fair timing comparison should add timestamp logging around each training call. Based on model structure, U-Net is faster and lighter; based on segmentation quality under the same epoch budget, OralBBNet is more effective.
 
-#### 3.1.1 U-Net训练曲线
+### 7.3 Why OralBBNet Helps
 
-U-Net的训练loss从第0轮的3.727持续下降至第29轮的3.356，验证loss从3.615下降至3.342。训练过程中loss曲线平滑下降，没有出现明显的过拟合（训练loss与验证loss的差距保持在0.2-0.3范围内）。训练集Dice系数从0.011缓慢上升至0.014，验证集Dice从0.011上升至0.014。
+The advantage of OralBBNet is most visible for tooth identity alignment. Many teeth have similar texture and shape, especially symmetric teeth or neighboring teeth. U-Net must infer the tooth number only from visual appearance and relative position. OralBBNet directly receives a spatial prior for each tooth channel, so the decoder is guided toward the correct anatomical region.
 
-**分析**：loss持续下降且Dice仍然较低，说明30轮的训练不足以使模型充分收敛。U-Net作为参数量较大的深度模型（约3100万参数），通常需要更多轮数（如60-100轮）才能达到稳定状态。此外，初始学习率3e-5偏保守，模型参数更新步长较小。
+This explains why OralBBNet improves mean tooth/channel Dice more clearly than Binary Dice. Binary Dice only asks whether tooth pixels are found. Mean tooth/channel Dice also asks whether they are assigned to the correct FDI channel.
 
-#### 3.1.2 OralBBNet训练曲线
+For this reason, OralBBNet is more suitable when the goal is a structured dental chart or a downstream disease analysis system that needs tooth identity. U-Net is attractive when inference must be simple and no detector or bounding-box prior is available.
 
-OralBBNet的训练loss从3.723下降至3.322，验证loss从3.595下降至3.292。OralBBNet在相同轮数下达到了比U-Net更低的loss值，且验证Dice在第29轮达到0.019，高于U-Net的0.014。
+## 8. Discussion
 
-**分析**：OralBBNet的收敛速度略快于U-Net，这归因于先验信息提供的"辅助信号"——边界框先验使模型在训练初期就能在正确的位置附近搜索牙齿边界，降低了探索空间。从loss曲线看，OralBBNet同样需要更多轮数才能充分收敛。
+The original OralBBNet already outperforms the original U-Net, confirming that bounding-box priors are useful for this task. The modified OralBBNet further improves the result by correcting the loss direction and using a more suitable activation function.
 
-### 3.2 阈值搜索
+The supplementary threshold-calibration experiment shows that a lower threshold can slightly increase Dice. However, the tuned thresholds can be as low as `0.05`, which indicates that the probability calibration is not ideal. For this reason, the main comparison in this report uses threshold `0.5`, which is simpler, more reproducible, and better aligned with the reference protocol.
 
-深度学习模型输出为32通道概率图，需要选择合适的阈值将概率图转为二值分割掩码。实验在验证集上以0.05为步长在[0.05, 0.95]范围内搜索最大化Binary Dice的阈值：
+For completeness, the tuned-threshold supplementary results are:
 
-| 模型 | 搜索范围 | 最佳阈值 | 最大验证集Binary Dice |
-|------|---------|---------|---------------------|
-| U-Net | 0.05-0.95 | 0.50 | 0.666 |
-| OralBBNet | 0.05-0.95 | 0.45 | 0.803 |
+| Method | Tuned threshold | Binary Dice | Binary IoU | Mean tooth/channel Dice |
+| --- | ---: | ---: | ---: | ---: |
+| Modified U-Net tuned | 0.05 | 0.896 | 0.813 | 0.827 |
+| Modified OralBBNet tuned | 0.05 | 0.909 | 0.834 | 0.871 |
 
-OralBBNet的最佳阈值（0.45）低于U-Net（0.50），且验证集Dice显著更高（0.803 vs 0.666）。阈值降低意味着OralBBNet预测的概率图在正确区域有更集中的高概率响应，即使在较低阈值下也能保持低误检率。
+The tuned threshold gives only a small improvement over fixed `0.5`. Therefore, using `0.5` is reasonable for the main report and keeps the comparison more conservative.
 
-### 3.3 验证集表现分析
+The main limitation is that the OralBBNet prior maps are built from dataset-provided YOLO labels or fallback boxes. A complete clinical pipeline should train a detector and evaluate the segmentation model using predicted boxes, not annotation-derived boxes. This would better measure real deployment performance.
 
-验证集上的结果表明：
-- U-Net在此参数配置下（30轮、lr=3e-5）仅达到了中等水平的分割精度，说明在有限训练资源下，纯图像输入的U-Net难以充分学习牙齿实例分割的复杂映射。
-- OralBBNet在相同训练条件下大幅超越U-Net，证明了先验信息的有效性——U-Net需要从零开始学习每个牙位的空间位置，而OralBBNet直接获得了这一信息，可将更多模型容量用于学习边界细节。
+## 9. Conclusion
 
----
+At threshold `0.5`, the modified OralBBNet achieves the best overall result:
 
-## 四、结果与讨论
+```text
+Binary Dice:              0.907
+Binary IoU:               0.831
+Mean tooth/channel Dice:  0.871
+```
 
-### 4.1 定量评估结果
+Compared with the original OralBBNet, the modified OralBBNet improves Binary Dice by `0.044`, Binary IoU by `0.063`, and mean tooth/channel Dice by `0.115`. Compared with the modified U-Net, it still improves the main metrics, especially tooth/channel alignment.
 
-三种方法在测试集上的完整评估结果如下表所示：
+Overall, OralBBNet is more accurate than U-Net because bounding-box priors provide explicit spatial guidance for each tooth position. U-Net remains lighter and simpler, but OralBBNet is the better choice when the goal is accurate 32-channel tooth instance segmentation.
 
-**表1：测试集分割性能对比**
+## References
 
-| 指标 | Active Contour | U-Net | OralBBNet |
-|------|:--------------:|:-----:|:---------:|
-| 最佳阈值 | 0.50 | 0.50 | 0.45 |
-| **Binary Dice** | 0.356 | 0.666 | **0.803** |
-| **Binary IoU** | 0.219 | 0.507 | **0.676** |
-| Pred Positive Ratio | 0.789 | 0.112 | 0.195 |
-| **Mean Channel Dice** | — | 0.079 | **0.170** |
-| 门牙Dice | — | 0.037 | **0.169** |
-| 尖牙Dice | — | 0.045 | **0.160** |
-| 前磨牙Dice | — | 0.036 | **0.157** |
-| 磨牙Dice | — | 0.146 | **0.184** |
+[1] O. Ronneberger, P. Fischer, and T. Brox. U-Net: Convolutional Networks for Biomedical Image Segmentation. In *Medical Image Computing and Computer-Assisted Intervention (MICCAI)*, 2015.
 
-### 4.2 结果分析
+[2] T. F. Chan and L. A. Vese. Active Contours Without Edges. *IEEE Transactions on Image Processing*, 10(2):266-277, 2001.
 
-#### 4.2.1 二值分割性能（Binary Dice / Binary IoU）
+[3] D. Budagam et al. OralBBNet: Spatially Guided Dental Segmentation of Panoramic X-Rays with Bounding Box Priors. *arXiv preprint arXiv:2406.03747*, 2025.
 
-Binary Dice和Binary IoU衡量的是模型将像素分类为"牙齿"或"背景"的能力（不考虑牙位通道分配）。
-
-**Active Contour**（Dice=0.356, IoU=0.219）远低于两种深度学习方法，且其Pred Positive Ratio高达0.789，意味着预测为牙齿的区域占图像面积的近80%。这远高于X光片中牙齿的实际占比（约15-25%），说明Chan-Vese模型在牙齿与颌骨灰度接近的区域无法有效停止轮廓演化。然而，作为完全无监督的方法，该结果仍具有一定的参考价值——它表明即使用最简单的方法也能捕获牙齿的大致位置，但精度远不能满足临床需求。
-
-**U-Net**（Dice=0.666, IoU=0.507）相比Active Contour有质的提升，Pred Positive Ratio降至0.112，说明模型已能有效区分牙齿与背景。该指标表明，即使在有限的训练轮数下，深度监督学习仍能提取出有意义的图像特征。但Binary Dice为0.666说明预测与真实标签的重叠仍有约三分之一的缺失。
-
-**OralBBNet**（Dice=0.803, IoU=0.676）在二值分割层面领先U-Net约13.7个百分点。其Pred Positive Ratio为0.195，更接近真实的牙齿占比，说明先验信息帮助模型更准确地定位了牙齿区域的范围。从临床角度看，0.803的Dice意味着约80%的牙齿区域被正确分割，已达到基本的辅助诊断门槛。
-
-#### 4.2.2 逐通道分割性能（Mean Channel Dice）
-
-Mean Channel Dice衡量的是模型在32个FDI牙位通道上的平均分割精度，是比Binary Dice更严格、更具实际意义的指标——因为临床诊断不仅需要知道"这里有牙齿"，还需要知道"这是哪一颗牙"。
-
-**U-Net**的Mean Channel Dice仅为0.079，这意味着在任意一个牙位通道上，预测与真实掩码的平均重叠率不足8%。尤其是门牙（0.037）、尖牙（0.045）和前磨牙（0.036）的Dice均在0.05以下，说明U-Net在这些牙位上几乎无法做出正确的通道分配。磨牙表现相对较好（0.146），因为磨物体积大、特征更明显。
-
-**OralBBNet**的Mean Channel Dice达到0.170，是U-Net的2.15倍。分组Dice均在0.157以上，表现更加均衡。磨牙仍是表现最好的分组（0.184），但门牙（0.169）和尖牙（0.160）的提升幅度更大。这表明边界框先验对小体积牙位的辅助作用尤为突出——当牙齿在图像中仅占几十到几百像素时，仅靠图像特征判别牙位极为困难，而先验框提供了关键的定位线索。
-
-从提升幅度看，OralBBNet相对于U-Net在门牙上的Dice提升约0.132（0.037→0.169），在尖牙上提升约0.115（0.045→0.160），在前磨牙上提升约0.121（0.036→0.157），在磨牙上提升约0.038（0.146→0.184）。中小体积牙位的改善幅度远大于大体积牙位，验证了先验信息对"小目标"分割的关键作用。
-
-### 4.3 定性分析
-
-从测试集的可视化结果分析，可以观察到以下规律：
-
-**Active Contour**的分割结果覆盖范围过大，无法精确拟合牙齿边界。分割区域连成一片，完全无法区分单颗牙齿。定性地看，该方法类似于一个粗略的"牙齿ROI提取器"。
-
-**U-Net**的概率热图在牙齿区域有响应，但存在以下问题：(1) 边缘模糊——牙冠和牙根边界处的概率值呈渐变过渡，导致二值化后边缘位置偏差；(2) 漏检——部分牙齿区域概率值偏低，阈值化后被错误排除；(3) 通道混淆——多个牙位的概率响应混杂在同一区域。这些问题共同导致了Mean Channel Dice偏低。
-
-**OralBBNet**的概率热图更加集中在正确的牙位区域。与U-Net相比：(1) 概率分布更尖锐——牙齿区域的概率值接近1.0，背景区域接近0.0，过渡带更窄；(2) 通道特异性更强——每个通道的响应主要集中在对应的先验框区域内；(3) 空间连续性更好——分割掩码内部孔洞更少，边缘更平滑。
-
-### 4.4 误差分析
-
-#### 4.4.1 主要误差来源
-
-1. **训练不充分**：30轮训练后loss仍在下降，模型未完全收敛。对比OralBBNet原论文中60轮的训练设置，本实验因计算资源限制减少了训练轮数，可能导致性能未达最优。
-
-2. **通道混淆**：Mean Channel Dice远低于Binary Dice，说明模型最大的问题不是"找不找得到牙齿"，而是"找对了牙齿但分错了牙位"。这在左右对称牙位（如FDI 11与21、FDI 36与46）中尤为常见，因为这些牙位在图像中呈镜像对称，仅依靠局部图像特征难以区分。
-
-3. **牙位不均衡**：磨牙体积大、像素多，在损失函数中占比大，模型对其更加"关注"；门牙体积小、像素少，对loss的贡献有限，模型优化不足。
-
-4. **图像质量差异**：数据集中部分图像存在运动模糊、对比度不足、金属伪影（如牙套、填充物）等问题，这些都增加了分割难度。
-
-#### 4.4.2 先验依赖的风险
-
-OralBBNet的优异性能依赖于边界框先验的质量。在推理场景中，如果YOLO检测器未能正确检测某个牙位（漏检），OralBBNet将无法获得对应的先验框，分割性能可能显著下降。本实验中部分测试样本使用了来自真实掩码的先验框（退避方案），这在一定程度上高估了OralBBNet在纯推理条件下的实际性能。
-
----
-
-## 五、总结与建议
-
-### 5.1 结论
-
-本研究系统比较了三种方法在全景X光片牙齿实例分割任务上的表现。主要结论如下：
-
-1. **Active Contour**（Binary Dice=0.356）作为传统无监督方法能够完成基本的牙齿区域定位，但精度不足以满足临床诊断需求。其价值在于提供了性能下界参照，并展示了该问题的固有难度。
-
-2. **U-Net**（Binary Dice=0.666, Mean Channel Dice=0.079）在二值分割层面表现良好，能从图像中有效定位牙齿区域。然而，其在逐通道牙位区分上精度有限（Mean Channel Dice<0.08），尤其难以处理小体积牙位的通道分配。
-
-3. **OralBBNet**（Binary Dice=0.803, Mean Channel Dice=0.170）是三种方法中表现最佳的方案。边界框先验的引入显著提升了分割精度，特别是对中小体积牙位的通道对齐度改善明显。先验门控机制为模型提供了"在哪里找什么"的空间指引，将分割问题从"在整张图中寻找32个目标"简化为"在32个已知区域中寻找目标"。
-
-### 5.2 推荐方案
-
-对于全景X光片牙齿实例分割的临床应用，推荐以下方案：
-
-- **主模型**：OralBBNet（检测+分割串联架构）
-- **检测器**：YOLOv8（提供鲁棒的边界框先验）
-- **分割网络**：具备先验门控机制的口腔专用分割模型
-- **运行管线**：YOLOv8检测 → 边界框生成 → OralBBNet分割 → 后处理与牙位对齐
-
-该方案在精度（Binary Dice=0.803）和实用性之间达到了较好的平衡。
-
-### 5.3 未来工作方向
-
-**数据层面：**
-- 扩展数据集规模与多样性，纳入更多牙科疾病病例（龋齿、牙周炎、牙齿缺失等）
-- 引入多中心数据，减少单数据集偏差
-- 探索半监督学习范式，利用大量未标注的临床X光片
-
-**模型层面：**
-- 增加训练轮数至60-100轮，采用cosine annealing学习率调度
-- 将YOLOv8的检测置信度编码为先验权重，使模型感知检测不确定性
-- 引入Transformer机制（如U-Net Transformer或Swin UNETR）增强全局上下文建模能力
-- 使用Tversky Loss或Focal Loss替代BCE+Dice组合，进一步缓解类别不平衡
-- 增加CRF后处理细化分割边界
-
-**优化层面：**
-- 模型蒸馏——使用大型模型（OralBBNet）指导轻量模型训练，便于临床部署
-- 推理加速——使用TensorRT或ONNX优化模型推理速度
-- 不确定性估计——引入蒙特卡洛Dropout或集成方法，为分割结果提供置信度估计
-
-### 5.4 局限性
-
-本研究存在以下局限性：(1) 训练轮数有限（30轮），模型可能未达到最优性能；(2) 部分OralBBNet测试样本使用了真实掩码退避先验，可能高估了实际推理性能；(3) 实验结果基于单一数据集（UFBA-425），向其他数据集的泛化性能尚待验证。
-
----
-
-## 参考文献
-
-[1] Ronneberger, O., Fischer, P., & Brox, T. (2015). U-Net: Convolutional Networks for Biomedical Image Segmentation. *In International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI)*, pp. 234-241. Springer.
-
-[2] Chan, T. F., & Vese, L. A. (2001). Active Contours Without Edges. *IEEE Transactions on Image Processing*, 10(2), 266-277.
-
-[3] OralBBNet: A New Approach for Teeth Instance Segmentation on Panoramic X-rays. (2024). *arXiv preprint arXiv:2406.03747*.
-
-[4] Jocher, G., Chaurasia, A., & Qiu, J. (2023). Ultralytics YOLOv8. https://github.com/ultralytics/ultralytics.
-
-[5] Silva, T., et al. UFBA-425: A Dataset for Dental Panoramic X-ray Image Analysis. Figshare. https://figshare.com/articles/dataset/UFBA-425/29827475.
-
-[6] Otsu, N. (1979). A Threshold Selection Method from Gray-Level Histograms. *IEEE Transactions on Systems, Man, and Cybernetics*, 9(1), 62-66.
-
-[7] Milletari, F., Navab, N., & Ahmadi, S. A. (2016). V-Net: Fully Convolutional Neural Networks for Volumetric Medical Image Segmentation. *In 2016 Fourth International Conference on 3D Vision (3DV)*, pp. 565-571. IEEE.
-
-[8] Kingma, D. P., & Ba, J. (2015). Adam: A Method for Stochastic Optimization. *In International Conference on Learning Representations (ICLR)*.
-
-[9] Zuiderveld, K. (1994). Contrast Limited Adaptive Histogram Equalization. *In Graphics Gems IV*, pp. 474-485. Academic Press.
-
-[10] Lin, T. Y., et al. (2017). Focal Loss for Dense Object Detection. *In Proceedings of the IEEE International Conference on Computer Vision (ICCV)*, pp. 2980-2988.
+[4] D. P. Kingma and J. Ba. Adam: A Method for Stochastic Optimization. In *International Conference on Learning Representations (ICLR)*, 2015.
